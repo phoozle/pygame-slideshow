@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+slides/*
+!slides/.keep
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Project-specific
+errors.txt
+.ropeproject/
+
+# OS files
+.DS_Store
+._*

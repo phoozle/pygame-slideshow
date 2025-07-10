@@ -1,0 +1,12 @@
+slide_dir: slides
+error_log: errors.txt
+slide_duration: 3
+transition_duration: 1.0
+fps: 30
+font_size: 42
+text_color: [255, 255, 255] # RGB tuple
+footer_bg_color: [0, 0, 0, 128] # RGBA tuple
+error_retry_delay: 30
+qr_box_size: 5
+qr_border: 2
+available_transitions: [fade, slide, dissolve, zoom]
