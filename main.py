@@ -2,7 +2,7 @@ import pygame
 import os
 import time
 import qrcode
-import cv2  # For video playback
+import imageio  # For video playback
 import logging
 import yaml  # For loading config
 import random  # For random transitions
@@ -12,6 +12,7 @@ import subprocess
 from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+import numpy as np  # For imageio frame arrays and pygame surfarray
 
 # Load config from YAML
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -162,10 +163,9 @@ def load_content():
                 slides.append({'type': 'image', 'surface': img})
             elif file.lower().endswith('.mp4'):
                 video_path = os.path.join(SLIDE_DIR, file)
-                cap = cv2.VideoCapture(video_path)
-                if not cap.isOpened():
-                    raise ValueError(f"Invalid video format: {file}")
-                cap.release()
+                # Validate video file can be opened
+                reader = imageio.get_reader(video_path)
+                reader.close()  # Close immediately after validation
                 slides.append({'type': 'video', 'path': video_path})
         except Exception as e:
             logging.error(f"Error loading slide '{file}': {str(e)}")
@@ -365,17 +365,13 @@ while running:
 
             elif slide['type'] == 'video':
                 # Play video
-                cap = cv2.VideoCapture(slide['path'])
-                if not cap.isOpened():
-                    raise ValueError(f"Failed to open video: {slide['path']}")
-                while cap.isOpened() and running:
-                    ret, frame = cap.read()
-                    if not ret:
+                reader = imageio.get_reader(slide['path'])
+                for frame in reader:
+                    if not running:
                         break
 
-                    # Convert BGR to RGB and to Pygame surface
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame_surf = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
+                    # Frame is numpy array (h, w, c) RGB
+                    frame_surf = pygame.surfarray.make_surface(np.swapaxes(frame, 0, 1))  # Swap to (w, h, c) for surfarray
                     frame_surf = pygame.transform.scale(frame_surf, screen.get_size())
 
                     screen.blit(frame_surf, (0, 0))
@@ -394,7 +390,7 @@ while running:
 
                     clock.tick(FPS)  # Cap to FPS (adjust if video FPS differs)
 
-                cap.release()
+                reader.close()
 
             current_slide = (current_slide + 1) % len(slides)
         else:
