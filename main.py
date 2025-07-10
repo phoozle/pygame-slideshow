@@ -14,6 +14,16 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import numpy as np  # For imageio frame arrays and pygame surfarray
 
+# Set environment variables for better Raspberry Pi compatibility
+os.environ['SDL_VIDEODRIVER'] = 'fbcon'
+os.environ['SDL_FBDEV'] = '/dev/fb0'
+os.environ['SDL_AUDIODRIVER'] = 'alsa'
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+
+# Fallback if fbcon fails
+if not os.path.exists('/dev/fb0'):
+    os.environ['SDL_VIDEODRIVER'] = 'x11'
+
 # Load config from YAML
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, 'config.yaml')
@@ -44,8 +54,36 @@ USE_FAST_TRANSITIONS = config.get('use_fast_transitions', False)  # Simplified t
 logging.basicConfig(filename=ERROR_LOG, level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 pygame.init()
-# Try to enable hardware acceleration
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
+# Try different display modes with fallbacks for Raspberry Pi
+screen = None
+display_modes = [
+    # Try hardware acceleration first
+    pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF,
+    # Fallback to software rendering
+    pygame.FULLSCREEN | pygame.SWSURFACE | pygame.DOUBLEBUF,
+    # Basic fullscreen
+    pygame.FULLSCREEN,
+    # Last resort - windowed mode
+    0
+]
+
+for mode in display_modes:
+    try:
+        if mode == 0:
+            # Windowed mode as last resort
+            screen = pygame.display.set_mode((1280, 720), mode)
+        else:
+            screen = pygame.display.set_mode((0, 0), mode)
+        print(f"Display initialized successfully with mode: {mode}")
+        break
+    except pygame.error as e:
+        print(f"Display mode {mode} failed: {e}")
+        continue
+
+if screen is None:
+    print("ERROR: Could not initialize display")
+    pygame.quit()
+    exit(1)
 font = pygame.font.SysFont('freesans', FONT_SIZE)
 startup_font = pygame.font.SysFont('freesans', 20)  # Smaller font for startup info
 clock = pygame.time.Clock()  # For timing control
