@@ -298,19 +298,39 @@ def render_overlays():
 # Optimized transition functions for Raspberry Pi performance
 def transition_fade(current_surf, next_surf):
     if USE_FAST_TRANSITIONS:
-        # Fast fade: just 3 steps
-        transition_steps = 3
-        alphas = [200, 128, 64]
-    else:
-        transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
-        alphas = [int(255 * (1 - step / transition_steps)) for step in range(transition_steps)]
+        # Ultra-fast fade: just 2 quick frames
+        # Frame 1: Show current image
+        screen.blit(current_surf, (0, 0))
+        render_overlays()
+        pygame.display.flip()
+        clock.tick(TRANSITION_FPS)
 
-    for alpha in alphas:
+        # Frame 2: Show next image
         screen.blit(next_surf, (0, 0))
-        temp_surf = current_surf.copy()
-        temp_surf = temp_surf.convert_alpha()  # Convert for alpha blending
-        temp_surf.set_alpha(alpha)
-        screen.blit(temp_surf, (0, 0))
+        render_overlays()
+        pygame.display.flip()
+        clock.tick(TRANSITION_FPS)
+        return
+
+    # Regular fade using horizontal strips (faster than alpha)
+    transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
+    screen_height = screen.get_height()
+    strip_height = max(1, screen_height // transition_steps)
+
+    # Start with current surface
+    work_surf = current_surf.copy()
+
+    for step in range(transition_steps):
+        # Calculate which strips to replace this step
+        strips_to_replace = step + 1
+        strips_height = strips_to_replace * strip_height
+
+        # Replace strips from top down
+        if strips_height > 0:
+            strip_rect = pygame.Rect(0, 0, screen.get_width(), min(strips_height, screen_height))
+            work_surf.blit(next_surf, (0, 0), strip_rect)
+
+        screen.blit(work_surf, (0, 0))
         render_overlays()
         pygame.display.flip()
         clock.tick(TRANSITION_FPS)

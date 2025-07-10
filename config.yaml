@@ -12,4 +12,4 @@ qr_border: 2
 available_transitions: [fade, slide, dissolve, zoom]
 # Performance optimization settings for Raspberry Pi
 transition_fps: 15 # Lower FPS for transitions to improve performance
-use_fast_transitions: false # Set to true for simplified transitions on slow hardware
+use_fast_transitions: true # Set to true for simplified transitions on slow hardware
