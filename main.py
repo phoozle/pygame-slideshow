@@ -15,14 +15,11 @@ from watchdog.events import FileSystemEventHandler
 import numpy as np  # For imageio frame arrays and pygame surfarray
 
 # Set environment variables for better Raspberry Pi compatibility
-os.environ['SDL_VIDEODRIVER'] = 'fbcon'
-os.environ['SDL_FBDEV'] = '/dev/fb0'
-os.environ['SDL_AUDIODRIVER'] = 'alsa'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+os.environ['SDL_AUDIODRIVER'] = 'alsa'
 
-# Fallback if fbcon fails
-if not os.path.exists('/dev/fb0'):
-    os.environ['SDL_VIDEODRIVER'] = 'x11'
+# Don't force a specific video driver - let pygame auto-detect
+# This allows proper fallback from fbcon to x11
 
 # Load config from YAML
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,34 +51,52 @@ USE_FAST_TRANSITIONS = config.get('use_fast_transitions', False)  # Simplified t
 logging.basicConfig(filename=ERROR_LOG, level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 pygame.init()
-# Try different display modes with fallbacks for Raspberry Pi
+
+# Try different video drivers and display modes
 screen = None
-display_modes = [
-    # Try hardware acceleration first
-    pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF,
-    # Fallback to software rendering
-    pygame.FULLSCREEN | pygame.SWSURFACE | pygame.DOUBLEBUF,
-    # Basic fullscreen
-    pygame.FULLSCREEN,
-    # Last resort - windowed mode
-    0
+drivers_to_try = [
+    (None, "auto-detect"),  # Let pygame choose
+    ("x11", "X11"),
+    ("fbcon", "framebuffer console"),
+    ("dummy", "dummy (headless)")
 ]
 
-for mode in display_modes:
+display_modes = [
+    (pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF, "hardware accelerated fullscreen"),
+    (pygame.FULLSCREEN | pygame.SWSURFACE | pygame.DOUBLEBUF, "software fullscreen"),
+    (pygame.FULLSCREEN, "basic fullscreen"),
+    (0, "windowed mode")
+]
+
+for driver, driver_name in drivers_to_try:
+    if driver:
+        os.environ['SDL_VIDEODRIVER'] = driver
+    elif 'SDL_VIDEODRIVER' in os.environ:
+        del os.environ['SDL_VIDEODRIVER']
+
     try:
-        if mode == 0:
-            # Windowed mode as last resort
-            screen = pygame.display.set_mode((1280, 720), mode)
-        else:
-            screen = pygame.display.set_mode((0, 0), mode)
-        print(f"Display initialized successfully with mode: {mode}")
-        break
+        pygame.display.quit()
+        pygame.display.init()
+
+        for mode, mode_name in display_modes:
+            try:
+                if mode == 0:
+                    screen = pygame.display.set_mode((1280, 720), mode)
+                else:
+                    screen = pygame.display.set_mode((0, 0), mode)
+                print(f"Display initialized: {driver_name} with {mode_name}")
+                break
+            except pygame.error as e:
+                continue
+
+        if screen:
+            break
+
     except pygame.error as e:
-        print(f"Display mode {mode} failed: {e}")
         continue
 
 if screen is None:
-    print("ERROR: Could not initialize display")
+    print("ERROR: Could not initialize any display mode")
     pygame.quit()
     exit(1)
 font = pygame.font.SysFont('freesans', FONT_SIZE)
