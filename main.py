@@ -37,12 +37,15 @@ ERROR_RETRY_DELAY = config.get('error_retry_delay', 30)
 QR_BOX_SIZE = config.get('qr_box_size', 5)
 QR_BORDER = config.get('qr_border', 2)
 AVAILABLE_TRANSITIONS = config.get('available_transitions', ['fade', 'slide', 'dissolve', 'zoom'])
+TRANSITION_FPS = config.get('transition_fps', 15)  # Lower FPS for transitions on Pi
+USE_FAST_TRANSITIONS = config.get('use_fast_transitions', False)  # Simplified transitions for Pi
 
 # Setup logging to errors.txt (only errors)
 logging.basicConfig(filename=ERROR_LOG, level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 pygame.init()
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+# Try to enable hardware acceleration
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
 font = pygame.font.SysFont('freesans', FONT_SIZE)
 startup_font = pygame.font.SysFont('freesans', 20)  # Smaller font for startup info
 clock = pygame.time.Clock()  # For timing control
@@ -160,6 +163,8 @@ def load_content():
                 img_path = os.path.join(SLIDE_DIR, file)
                 img = pygame.image.load(img_path)
                 img = pygame.transform.scale(img, screen_size)
+                # Convert to screen format for faster blitting
+                img = img.convert()
                 slides.append({'type': 'image', 'surface': img})
             elif file.lower().endswith('.mp4'):
                 video_path = os.path.join(SLIDE_DIR, file)
@@ -201,6 +206,8 @@ def load_content():
                 img = qr.make_image(fill_color="black", back_color="white")
                 img = img.convert('RGB')
                 qr_surface = pygame.image.fromstring(img.tobytes(), img.size, img.mode)
+                # Convert QR surface for faster blitting
+                qr_surface = qr_surface.convert_alpha()
         except Exception as e:
             logging.error(f"Error generating QR code: {str(e)}")
 
@@ -215,6 +222,7 @@ def render_overlays():
 
         # Create semi-transparent blue background surface
         bg_surf = pygame.Surface((max_width, footer_height + 10), pygame.SRCALPHA)  # +10 for inner padding
+        bg_surf = bg_surf.convert_alpha()  # Convert for faster blitting
         bg_surf.fill(FOOTER_BG_COLOR)
 
         # Blit background
@@ -234,69 +242,115 @@ def render_overlays():
         y = screen.get_height() - qr_height - 20
         screen.blit(qr_surface, (x, y))
 
-# Transition functions
+# Optimized transition functions for Raspberry Pi performance
 def transition_fade(current_surf, next_surf):
-    transition_steps = int(TRANSITION_DURATION * FPS)
-    for step in range(transition_steps):
-        alpha = int(255 * (1 - step / transition_steps))
+    if USE_FAST_TRANSITIONS:
+        # Fast fade: just 3 steps
+        transition_steps = 3
+        alphas = [200, 128, 64]
+    else:
+        transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
+        alphas = [int(255 * (1 - step / transition_steps)) for step in range(transition_steps)]
+
+    for alpha in alphas:
         screen.blit(next_surf, (0, 0))
         temp_surf = current_surf.copy()
+        temp_surf = temp_surf.convert_alpha()  # Convert for alpha blending
         temp_surf.set_alpha(alpha)
         screen.blit(temp_surf, (0, 0))
         render_overlays()
         pygame.display.flip()
-        clock.tick(FPS)
+        clock.tick(TRANSITION_FPS)
 
 def transition_slide(current_surf, next_surf):
     width = screen.get_width()
-    transition_steps = int(TRANSITION_DURATION * FPS)
-    for step in range(transition_steps):
-        progress = step / transition_steps
+    if USE_FAST_TRANSITIONS:
+        # Fast slide: just 4 steps
+        positions = [0.25, 0.5, 0.75, 1.0]
+    else:
+        transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
+        positions = [step / transition_steps for step in range(transition_steps)]
+
+    for progress in positions:
         screen.blit(current_surf, (-width * progress, 0))
         screen.blit(next_surf, (width * (1 - progress), 0))
         render_overlays()
         pygame.display.flip()
-        clock.tick(FPS)
+        clock.tick(TRANSITION_FPS)
 
 def transition_dissolve(current_surf, next_surf):
-    px_current = pygame.PixelArray(current_surf.copy())
-    px_next = pygame.PixelArray(next_surf)
-    pixels = list(range(screen.get_width() * screen.get_height()))
-    random.shuffle(pixels)
-    transition_steps = int(TRANSITION_DURATION * FPS)
-    chunk_size = len(pixels) // transition_steps
+    # Optimized dissolve using rectangular blocks instead of individual pixels
+    block_size = 8 if USE_FAST_TRANSITIONS else 4
+    width, height = screen.get_size()
+    blocks_x = width // block_size
+    blocks_y = height // block_size
+
+    # Create list of block positions
+    blocks = [(x * block_size, y * block_size) for x in range(blocks_x) for y in range(blocks_y)]
+    random.shuffle(blocks)
+
+    if USE_FAST_TRANSITIONS:
+        # Fast dissolve: fewer steps
+        transition_steps = 8
+    else:
+        transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
+
+    # Start with current surface
+    work_surf = current_surf.copy()
+    blocks_per_step = len(blocks) // transition_steps
+
     for step in range(transition_steps):
-        start = step * chunk_size
-        end = start + chunk_size if step < transition_steps - 1 else len(pixels)
-        for i in range(start, end):
-            x = pixels[i] % screen.get_width()
-            y = pixels[i] // screen.get_width()
-            px_current[x, y] = px_next[x, y]
-        temp_surf = px_current.make_surface()
-        screen.blit(temp_surf, (0, 0))
+        start_idx = step * blocks_per_step
+        end_idx = start_idx + blocks_per_step if step < transition_steps - 1 else len(blocks)
+
+        # Copy blocks from next surface to work surface
+        for i in range(start_idx, end_idx):
+            x, y = blocks[i]
+            block_rect = pygame.Rect(x, y, block_size, block_size)
+            work_surf.blit(next_surf, (x, y), block_rect)
+
+        screen.blit(work_surf, (0, 0))
         render_overlays()
         pygame.display.flip()
-        clock.tick(FPS)
+        clock.tick(TRANSITION_FPS)
 
 def transition_zoom(current_surf, next_surf):
     center_x, center_y = screen.get_width() // 2, screen.get_height() // 2
-    transition_steps = int(TRANSITION_DURATION * FPS)
-    for step in range(transition_steps):
-        progress = step / transition_steps
-        # Zoom out current
-        current_scale = 1 - progress
-        scaled_current = pygame.transform.smoothscale(current_surf, (int(screen.get_width() * current_scale), int(screen.get_height() * current_scale)))
+
+    if USE_FAST_TRANSITIONS:
+        # Pre-compute just 4 zoom levels
+        scales = [0.75, 0.5, 0.25, 0.0]
+    else:
+        transition_steps = int(TRANSITION_DURATION * TRANSITION_FPS)
+        scales = [1 - (step / transition_steps) for step in range(transition_steps)]
+
+    # Pre-scale the surfaces to avoid repeated smoothscale calls
+    scaled_surfaces = []
+    for scale in scales:
+        if scale > 0:
+            current_scale = scale
+            next_scale = 1 - scale
+
+            # Use regular scale instead of smoothscale for better performance
+            scaled_current = pygame.transform.scale(current_surf,
+                (max(1, int(screen.get_width() * current_scale)),
+                 max(1, int(screen.get_height() * current_scale))))
+            scaled_next = pygame.transform.scale(next_surf,
+                (max(1, int(screen.get_width() * next_scale)),
+                 max(1, int(screen.get_height() * next_scale))))
+
+            scaled_surfaces.append((scaled_current, scaled_next))
+
+    for scaled_current, scaled_next in scaled_surfaces:
         current_rect = scaled_current.get_rect(center=(center_x, center_y))
-        # Zoom in next
-        next_scale = progress
-        scaled_next = pygame.transform.smoothscale(next_surf, (int(screen.get_width() * next_scale), int(screen.get_height() * next_scale)))
         next_rect = scaled_next.get_rect(center=(center_x, center_y))
-        screen.fill((0, 0, 0))  # Black bg during zoom
+
+        screen.fill((0, 0, 0))
         screen.blit(scaled_current, current_rect)
         screen.blit(scaled_next, next_rect)
         render_overlays()
         pygame.display.flip()
-        clock.tick(FPS)
+        clock.tick(TRANSITION_FPS)
 
 # Map for random selection
 TRANSITION_MAP = {
@@ -305,6 +359,9 @@ TRANSITION_MAP = {
     'dissolve': transition_dissolve,
     'zoom': transition_zoom
 }
+
+# Fast transitions for Pi - only use the most efficient ones
+FAST_TRANSITIONS = ['slide', 'fade'] if USE_FAST_TRANSITIONS else AVAILABLE_TRANSITIONS
 
 class ReloadHandler(FileSystemEventHandler):
     def on_modified(self, event):
@@ -359,7 +416,8 @@ while running:
                 next_index = (current_slide + 1) % len(slides)
                 next_slide = slides[next_index]
                 if next_slide['type'] == 'image':
-                    trans_type = random.choice(AVAILABLE_TRANSITIONS)
+                    available_transitions = FAST_TRANSITIONS if USE_FAST_TRANSITIONS else AVAILABLE_TRANSITIONS
+                    trans_type = random.choice(available_transitions)
                     TRANSITION_MAP[trans_type](slide['surface'], next_slide['surface'])
                     # Check events during transition (added to each func, but for brevity omitted here; add if needed)
 
@@ -373,6 +431,7 @@ while running:
                     # Frame is numpy array (h, w, c) RGB
                     frame_surf = pygame.surfarray.make_surface(np.swapaxes(frame, 0, 1))  # Swap to (w, h, c) for surfarray
                     frame_surf = pygame.transform.scale(frame_surf, screen.get_size())
+                    frame_surf = frame_surf.convert()  # Convert for faster blitting
 
                     screen.blit(frame_surf, (0, 0))
                     render_overlays()
