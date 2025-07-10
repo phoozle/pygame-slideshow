@@ -6,6 +6,7 @@ __pycache__/
 
 slides/*
 !slides/.keep
+!slides/*.example
 
 # Virtual environments
 venv/
