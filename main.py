@@ -6,6 +6,9 @@ import cv2  # For video playback
 import logging
 import yaml  # For loading config
 import random  # For random transitions
+import socket
+import platform
+import subprocess
 from PIL import Image
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -40,7 +43,102 @@ logging.basicConfig(filename=ERROR_LOG, level=logging.ERROR, format='%(asctime)s
 pygame.init()
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 font = pygame.font.SysFont('freesans', FONT_SIZE)
+startup_font = pygame.font.SysFont('freesans', 20)  # Smaller font for startup info
 clock = pygame.time.Clock()  # For timing control
+
+def get_system_info():
+    """Get system information including IP addresses."""
+    info = []
+
+    # Basic system info
+    info.append(f"System: {platform.system()} {platform.release()}")
+    info.append(f"Machine: {platform.machine()}")
+    info.append(f"Hostname: {socket.gethostname()}")
+    info.append("")
+
+    # Get IP addresses
+    try:
+        # Get all network interfaces
+        if platform.system() == "Darwin":  # macOS
+            result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+            lines = result.stdout.split('\n')
+            current_interface = None
+            for line in lines:
+                if line and not line.startswith('\t') and not line.startswith(' '):
+                    current_interface = line.split(':')[0]
+                elif 'inet ' in line and '127.0.0.1' not in line:
+                    ip = line.split('inet ')[1].split(' ')[0]
+                    info.append(f"{current_interface}: {ip}")
+        else:  # Linux/Raspbian
+            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True)
+            if result.returncode == 0:
+                ips = result.stdout.strip().split()
+                for i, ip in enumerate(ips):
+                    info.append(f"IP {i+1}: {ip}")
+
+            # Also try ip command for interface names
+            try:
+                result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True)
+                lines = result.stdout.split('\n')
+                current_interface = None
+                for line in lines:
+                    if line and not line.startswith(' '):
+                        if ':' in line:
+                            current_interface = line.split(':')[1].strip().split('@')[0]
+                    elif 'inet ' in line and '127.0.0.1' not in line and '/32' not in line:
+                        ip = line.strip().split('inet ')[1].split('/')[0]
+                        if current_interface:
+                            info.append(f"{current_interface}: {ip}")
+            except:
+                pass
+    except Exception as e:
+        info.append(f"Error getting IP addresses: {str(e)}")
+
+    return info
+
+def display_startup_message():
+    """Display startup message with system information for 60 seconds."""
+    system_info = get_system_info()
+
+    start_time = time.time()
+    while time.time() - start_time < 60:
+        # Check for quit events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False
+                elif event.key == pygame.K_q and pygame.key.get_mods() & pygame.KMOD_GUI:
+                    return False
+                elif event.key == pygame.K_SPACE:  # Allow space to skip startup
+                    return True
+
+        # Draw startup screen
+        screen.fill((0, 0, 0))  # Black background
+
+        # Title
+        title_surf = font.render("PyGame Slideshow - Starting Up", True, (255, 255, 255))
+        title_rect = title_surf.get_rect(center=(screen.get_width() // 2, 50))
+        screen.blit(title_surf, title_rect)
+
+        # System info
+        y_pos = 120
+        for line in system_info:
+            if line.strip():  # Skip empty lines for spacing
+                text_surf = startup_font.render(line, True, (200, 200, 200))
+                screen.blit(text_surf, (50, y_pos))
+            y_pos += 30
+
+        # Time remaining
+        remaining = int(60 - (time.time() - start_time))
+        time_surf = startup_font.render(f"Starting slideshow in {remaining} seconds... (Press SPACE to skip)", True, (255, 255, 0))
+        screen.blit(time_surf, (50, screen.get_height() - 50))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+    return True
 
 def display_error(message):
     """Display error message on screen for a duration."""
@@ -223,7 +321,13 @@ qr_surface = None
 load_content()
 current_slide = 0
 
-running = True
+# Show startup message first
+running = display_startup_message()
+if not running:
+    observer.stop()
+    observer.join()
+    pygame.quit()
+    exit()
 while running:
     try:
         if slides:
